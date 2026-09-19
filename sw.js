@@ -1,4 +1,4 @@
-const CACHE = "breath-hold-v1";
+const CACHE = "breath-hold-v2";
 const ASSETS = [
   "./",
   "./index.html",
