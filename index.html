@@ -127,14 +127,13 @@
 
   <div class="settings" id="settings">
     <div class="row"><span>Calm breathing first</span><div class="stepper"><button data-k="prep" data-d="-1">&minus;</button><span id="v-prep"></span><button data-k="prep" data-d="1">+</button></div></div>
-    <div class="row"><span>Stay calm after first urge</span><div class="stepper"><button data-k="extra" data-d="-1">&minus;</button><span id="v-extra"></span><button data-k="extra" data-d="1">+</button></div></div>
+    <div class="row"><span>Hold time</span><div class="stepper"><button data-k="target" data-d="-1">&minus;</button><span id="v-target"></span><button data-k="target" data-d="1">+</button></div></div>
     <div class="row"><span>Rest between holds</span><div class="stepper"><button data-k="rest" data-d="-1">&minus;</button><span id="v-rest"></span><button data-k="rest" data-d="1">+</button></div></div>
     <div class="row"><span>Holds</span><div class="stepper"><button data-k="rounds" data-d="-1">&minus;</button><span id="v-rounds"></span><button data-k="rounds" data-d="1">+</button></div></div>
   </div>
 
   <button class="main" id="btn">Start</button>
   <div class="links">
-    <button class="link" id="noUrge" hidden>Breathing, no clear urge</button>
     <button class="link" id="end" hidden>End session</button>
     <button class="link" id="openHistory">History</button>
   </div>
@@ -157,30 +156,29 @@
   const STORE = "breathHold.sessions.v1";
   const PREFS = "breathHold.prefs.v1";
 
-  // step, min, max per setting; prep/rest/extra in seconds
+  // step, min, max per setting; prep/rest/target in seconds
   const LIMITS = {
     prep:   { step: 60, min: 60,  max: 300 },
-    extra:  { step: 5,  min: 0,   max: 60 },
+    target: { step: 5,  min: 10,  max: 120 },
     rest:   { step: 30, min: 60,  max: 300 },
     rounds: { step: 1,  min: 1,   max: 6 }
   };
-  const DEFAULTS = { prep: 180, extra: 5, rest: 120, rounds: 4 };
+  const DEFAULTS = { prep: 180, target: 20, rest: 120, rounds: 4 };
 
   const $ = (id) => document.getElementById(id);
   const elDial = $("dial"), elRing = $("ring"), elCount = $("count"), elLabel = $("label");
   const elPhase = $("phase"), elRound = $("round"), elResult = $("result");
   const elSettings = $("settings"), elSafety = $("safety");
-  const btn = $("btn"), btnNoUrge = $("noUrge"), btnEnd = $("end"), btnOpenHistory = $("openHistory");
+  const btn = $("btn"), btnEnd = $("end"), btnOpenHistory = $("openHistory");
 
   elRing.style.strokeDasharray = C;
 
   let prefs = Object.assign({}, DEFAULTS, readJson(PREFS, {}));
-  let state = "idle";   // idle | prep | ready | hold | calm | rest
-  let phaseStart = 0;   // performance.now() at start of countdown phase or hold
-  let urgeAt = null;    // seconds into hold when first urge was tapped
+  let state = "idle";   // idle | prep | ready | hold | rest
+  let phaseStart = 0;   // performance.now() at start of the current phase
   let round = 0;
-  let rounds = [];      // completed holds this session: {urge, end}
-  let signalled = false;
+  let rounds = [];      // finished holds this session: {target, held, completed}
+  let breatheUntil = 0; // performance.now() until which "Breathe now" stays on screen
   let timerId = null, audioCtx = null, wakeLock = null;
 
   function readJson(key, fallback) {
@@ -199,7 +197,7 @@
 
   function renderPrefs() {
     $("v-prep").textContent = fmt(prefs.prep);
-    $("v-extra").textContent = prefs.extra + " s";
+    $("v-target").textContent = fmt(prefs.target);
     $("v-rest").textContent = fmt(prefs.rest);
     $("v-rounds").textContent = prefs.rounds;
   }
@@ -207,14 +205,12 @@
   function enter(next) {
     state = next;
     phaseStart = performance.now();
-    signalled = false;
     const active = next !== "idle";
     document.body.classList.toggle("idle", !active);
     elSettings.hidden = active;
     elSafety.hidden = active;
     btnOpenHistory.hidden = active;
     btnEnd.hidden = !active;
-    btnNoUrge.hidden = next !== "hold";
     btn.hidden = next === "rest";
     btn.classList.remove("breathe");
     elDial.classList.remove("breathe");
@@ -235,11 +231,8 @@
     } else if (next === "hold") {
       elPhase.textContent = "Hold. Relax jaw, shoulders, belly";
       elLabel.textContent = "holding";
-      btn.textContent = "First urge to breathe"; drawRing(0);
-    } else if (next === "calm") {
-      elPhase.textContent = "Stay calm";
-      elLabel.textContent = "first urge at " + fmt(urgeAt);
-      btn.textContent = "Breathing";
+      elCount.textContent = fmt(prefs.target);
+      btn.textContent = "Breathing early"; drawRing(1);
     } else if (next === "rest") {
       elPhase.textContent = "Rest. Breathe normally";
       elLabel.textContent = "until next hold";
@@ -260,38 +253,50 @@
         elCount.textContent = fmtCeil(rem);
       }
     } else if (state === "hold") {
-      elCount.textContent = fmt(el);
-    } else if (state === "calm") {
-      elCount.textContent = fmt(el);
-      const calm = el - urgeAt;
-      drawRing(prefs.extra ? calm / prefs.extra : 1);
-      if (calm >= prefs.extra && !signalled) {
-        signalled = true;
+      const rem = prefs.target - el;
+      if (rem <= 0) {
         signal();
-        elPhase.textContent = "Breathe now";
-        elDial.classList.add("breathe");
-        btn.classList.add("breathe");
+        endHold(true);
+      } else {
+        drawRing(rem / prefs.target);
+        elCount.textContent = fmtCeil(rem);
       }
     }
+    if (breatheUntil && performance.now() >= breatheUntil) clearBreathe();
+  }
+
+  // "Breathe now" stays up for a few seconds after the signal, over rest or the idle screen
+  function showBreathe() {
+    breatheUntil = performance.now() + 5000;
+    elPhase.textContent = "Breathe now";
+    elDial.classList.add("breathe");
+    if (!timerId) setTimeout(clearBreathe, 5000);
+  }
+  function clearBreathe() {
+    if (!breatheUntil) return;
+    breatheUntil = 0;
+    elDial.classList.remove("breathe");
+    if (state === "rest") elPhase.textContent = "Rest. Breathe normally";
+    else if (state === "idle") elPhase.textContent = "Breath hold";
   }
 
   function startSession() {
     initAudio();
     requestWakeLock();
-    rounds = []; round = 1;
+    rounds = []; round = 1; breatheUntil = 0;
     elResult.textContent = "";
     enter("prep");
     // interval, not requestAnimationFrame: keeps firing the signals even if the page stops painting
     if (!timerId) timerId = setInterval(tick, 100);
   }
 
-  function endHold(withUrge) {
-    const end = elapsed();
-    rounds.push({ urge: withUrge ? round1(urgeAt) : null, end: round1(end) });
-    urgeAt = null;
+  function endHold(completed) {
+    const held = completed ? prefs.target : Math.min(prefs.target, round1(elapsed()));
+    rounds.push({ target: prefs.target, held: held, completed: completed });
     showRounds();
     if (round < prefs.rounds) enter("rest");
     else finish();
+    if (completed) showBreathe();
   }
   function round1(x) { return Math.round(x * 10) / 10; }
 
@@ -301,15 +306,23 @@
     releaseWakeLock();
     if (rounds.length) {
       const all = readJson(STORE, []);
-      all.push({ date: new Date().toISOString(), extra: prefs.extra, rest: prefs.rest, rounds: rounds });
+      all.push({ date: new Date().toISOString(), target: prefs.target, rest: prefs.rest, rounds: rounds });
       writeJson(STORE, all);
     }
-    urgeAt = null;
     enter("idle");
     showRounds();
   }
 
+  function summaryText(s) {
+    if (!s.rounds.length || s.rounds[0].held == null) return "";
+    const early = s.rounds.filter((r) => !r.completed);
+    let t = (s.rounds.length - early.length) + "/" + s.rounds.length + " completed";
+    if (early.length) t += ", early at " + early.map((r) => fmt(r.held)).join(", ");
+    return t;
+  }
   function roundText(r, i) {
+    if (r.held != null) return (i + 1) + ".  held " + fmt(r.held) + " of " + fmt(r.target) + (r.completed ? "" : "  ·  breathing early");
+    // sessions from before the fixed-time protocol stored {urge, end}
     return (i + 1) + ".  first urge " + (r.urge == null ? "–" : fmt(r.urge)) + "  ·  breathing " + fmt(r.end);
   }
   function showRounds() {
@@ -366,10 +379,8 @@
     if (state === "idle") startSession();
     else if (state === "prep") enter("ready");
     else if (state === "ready") enter("hold");
-    else if (state === "hold") { urgeAt = elapsed(); const t = phaseStart; enter("calm"); phaseStart = t; }
-    else if (state === "calm") endHold(true);
+    else if (state === "hold") endHold(false);
   });
-  btnNoUrge.addEventListener("click", () => { if (state === "hold") endHold(false); });
   btnEnd.addEventListener("click", () => { if (state !== "idle") finish(); });
 
   elSettings.addEventListener("click", (e) => {
@@ -399,6 +410,8 @@
       const h = document.createElement("b");
       h.textContent = new Date(s.date).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
       box.appendChild(h);
+      const sum = summaryText(s);
+      if (sum) { const d = document.createElement("div"); d.textContent = sum; box.appendChild(d); }
       s.rounds.forEach((r, i) => {
         const d = document.createElement("div");
         d.textContent = roundText(r, i);
@@ -408,10 +421,12 @@
     });
   }
   function toCsv() {
-    const lines = ["date,hold,first_urge_s,breathing_s,calm_setting_s,rest_setting_s"];
+    // last three columns are only filled for sessions from before the fixed-time protocol
+    const lines = ["date,hold,target_s,held_s,completed,rest_setting_s,first_urge_s,breathing_s,calm_setting_s"];
     readJson(STORE, []).forEach((s) => {
       s.rounds.forEach((r, i) => {
-        lines.push([s.date, i + 1, r.urge == null ? "" : r.urge, r.end, s.extra, s.rest].join(","));
+        if (r.held != null) lines.push([s.date, i + 1, r.target, r.held, r.completed, s.rest, "", "", ""].join(","));
+        else lines.push([s.date, i + 1, "", "", "", s.rest, r.urge == null ? "" : r.urge, r.end, s.extra].join(","));
       });
     });
     return lines.join("\n");

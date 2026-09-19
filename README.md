@@ -1,6 +1,6 @@
 # Breath Hold
 
-A dry-land breath-hold trainer. The goal is staying calm through the first urge to breathe, not holding longer - so there are no records, no "best" markers and no way to skip the rest. It's a PWA - it runs in the browser and can be added to your phone's home screen, where it behaves like an app (icon, fullscreen, works offline).
+A dry-land breath-hold trainer. The goal is staying calm through a fixed hold time, not holding longer - so there are no records, no "best" markers and no way to skip the rest. It's a PWA - it runs in the browser and can be added to your phone's home screen, where it behaves like an app (icon, fullscreen, works offline).
 
 ## Usage
 
@@ -15,17 +15,18 @@ After that it opens fullscreen, without an address bar, and works without an int
 ## Session
 
 1. Calm, normal breathing (1-5 min)
-2. One deep breath in, then hold
-3. Tap at the first clear urge to breathe
-4. Stay calm for the set number of seconds; the app signals "Breathe now"
-5. Tap "Breathing" when you breathe, rest, repeat
+2. One deep breath in, then tap "Start hold"
+3. Hold for the set time - nothing to tap, just relax
+4. At the end the app signals "Breathe now" and the rest starts on its own
+5. "Breathing early" stops the hold at any point - that is the right call whenever calm is gone, not a failure
 
 Dry land only, lying down. No fast deep breaths beforehand. Breathe right away at panic, dizziness, vision changes or chest pain.
 
 ## Features
 
-- Two times logged per hold: first urge and breathing
-- Adjustable calm breathing, calm time after first urge, rest and number of holds
+- Logged per hold: target time, time held, completed or breathing early
+- Adjustable calm breathing, hold time, rest and number of holds
+- The app never raises the hold time or suggests it - progression is decided outside the app
 - Audible beep + vibration (Android) at each signal
 - Screen stays awake during the session (Wake Lock)
 - History stored on the device, CSV export
